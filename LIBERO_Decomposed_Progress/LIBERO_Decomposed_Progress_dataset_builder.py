@@ -45,9 +45,13 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
         print(task_suite, episode_idx)
         print()
 
+        # `_manual` is the recovery path for episodes that Stage 2's FSM
+        # filter (pick_place_to_discard in decompose_utils.py) rejected and
+        # were re-labelled by hand. Same schema as the auto-generated files.
         chunks_json_path = next((p for p in [
             os.path.join(process_path, task_suite, f"episode_{episode_id}", "chunks_summary.json"),
-            os.path.join(process_path, task_suite, f"episode_{episode_id}_llm", "chunks_summary.json")
+            os.path.join(process_path, task_suite, f"episode_{episode_id}_llm", "chunks_summary.json"),
+            os.path.join(process_path, task_suite, f"episode_{episode_id}_manual", "chunks_summary.json"),
         ] if os.path.exists(p)), None)
 
         with open(chunks_json_path, "r") as f:
@@ -234,8 +238,22 @@ class LIBERODecomposedProgress(MultiThreadedDatasetBuilder):
                 continue
             with open(summary_file, "r") as f:
                 summary = json.load(f)
-            valid_episode_ids = [int(eid) for eid in summary["episodes"].keys()]
-            for i in valid_episode_ids:
+            valid_episode_ids = {int(eid) for eid in summary["episodes"].keys()}
+
+            # Pick up hand-labelled episodes that aren't in all_episodes_summary.json.
+            # These are FSM-filtered episodes the user resurrected by dropping a
+            # chunks_summary.json into `episode_<N>_manual/`. We scan the disk so
+            # the user doesn't have to edit the summary file.
+            suite_dir = os.path.join(process_path, task_suite)
+            for entry in os.listdir(suite_dir):
+                if entry.startswith("episode_") and entry.endswith("_manual"):
+                    eid_str = entry[len("episode_"):-len("_manual")]
+                    if eid_str.isdigit() and os.path.exists(
+                        os.path.join(suite_dir, entry, "chunks_summary.json")
+                    ):
+                        valid_episode_ids.add(int(eid_str))
+
+            for i in sorted(valid_episode_ids):
                 # if i > 5: continue
                 episode_configs.append((i, original_rlds_dir, task_suite, process_path))
 
